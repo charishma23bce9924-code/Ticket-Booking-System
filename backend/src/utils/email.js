@@ -9,11 +9,12 @@ function buildTransport() {
   }
   return nodemailer.createTransport({
     host: 'smtp.gmail.com',
-    port: 465,
-    secure: true,
+    port: 587,
+    secure: false,
+    requireTLS: true,
     auth: {
       user: process.env.GMAIL_USER,
-      pass: process.env.GMAIL_APP_PASSWORD, // 16-char App Password, NOT your normal Gmail password
+      pass: process.env.GMAIL_APP_PASSWORD,
     },
   });
 
