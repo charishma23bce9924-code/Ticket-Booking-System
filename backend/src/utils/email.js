@@ -1,52 +1,43 @@
-const nodemailer = require('nodemailer');
+const { Resend } = require('resend');
 const QRCode = require('qrcode');
-
-function buildTransport() {
-  // Falls back to a JSON transport (logs to console) if Gmail creds aren't
-  // set, so the app is still fully runnable locally without any email account.
-  if (!process.env.GMAIL_USER || !process.env.GMAIL_APP_PASSWORD) {
-    return nodemailer.createTransport({ jsonTransport: true });
-  }
-  return nodemailer.createTransport({
-    host: 'smtp.gmail.com',
-    port: 587,
-    secure: false,
-    requireTLS: true,
-    auth: {
-      user: process.env.GMAIL_USER,
-      pass: process.env.GMAIL_APP_PASSWORD,
-    },
-  });
-
-const transporter = buildTransport();
-const FROM = process.env.EMAIL_FROM || `Ticket Booking <${process.env.GMAIL_USER || 'no-reply@ticketbooking.dev'}>`;
-
-if (process.env.GMAIL_USER && process.env.GMAIL_APP_PASSWORD) {
-  transporter.verify((err) => {
-    if (err) {
-      console.error('❌ Gmail SMTP connection failed — emails will NOT send. Check GMAIL_USER/GMAIL_APP_PASSWORD in .env:', err.message);
-    } else {
-      console.log('✅ Gmail SMTP connected — real emails will be sent from', process.env.GMAIL_USER);
-    }
-  });
+ 
+const resend = process.env.RESEND_API_KEY ? new Resend(process.env.RESEND_API_KEY) : null;
+const FROM = process.env.EMAIL_FROM || 'Ticket Booking <onboarding@resend.dev>';
+ 
+if (!resend) {
+  console.log('ℹ️  No RESEND_API_KEY set — emails will be logged to this console instead of actually sent.');
 } else {
-  console.log('ℹ️  No GMAIL_USER/GMAIL_APP_PASSWORD set — emails will be logged to this console instead of actually sent.');
+  console.log('✅ Resend configured — real emails will be sent via Resend API');
 }
-
+ 
 async function generateQRCodeDataUrl(payload) {
   const text = typeof payload === 'string' ? payload : JSON.stringify(payload);
   return QRCode.toDataURL(text, { errorCorrectionLevel: 'M', margin: 1, width: 300 });
 }
-
-// Data URLs (src="data:image/...") get stripped by most clients (Gmail
-// included) for security, so the QR wouldn't render. Nodemailer's cid
-// attachment support fixes this: attach the image with a Content-ID, then
-// reference it in the HTML as src="cid:qr-ticket" — the standard way inline
-// email images work.
-function dataUrlToBuffer(dataUrl) {
-  return Buffer.from(dataUrl.split(',')[1], 'base64');
+ 
+function dataUrlToBase64(dataUrl) {
+  return dataUrl.split(',')[1];
 }
-
+ 
+async function sendEmail({ to, subject, html, attachments }) {
+  if (!resend) {
+    console.log(`📧 [DEV] Would send email to ${to}: ${subject}`);
+    return { id: 'dev-mode' };
+  }
+  const { data, error } = await resend.emails.send({
+    from: FROM,
+    to,
+    subject,
+    html,
+    attachments,
+  });
+  if (error) {
+    console.error('❌ Resend send failed:', error);
+    throw new Error(error.message || 'Email send failed');
+  }
+  return data;
+}
+ 
 async function sendBookingConfirmationEmail({ to, name, bookingRef, eventTitle, seatLabels, qrDataUrl }) {
   const html = `
     <div style="font-family: Arial, sans-serif; max-width: 480px; margin: auto;">
@@ -59,24 +50,23 @@ async function sendBookingConfirmationEmail({ to, name, bookingRef, eventTitle, 
       <img src="cid:qr-ticket" alt="QR Ticket" style="width:220px;height:220px;" />
       <p style="color:#888;font-size:12px;">This QR encodes your booking reference for verification.</p>
     </div>`;
-
-  const info = await transporter.sendMail({
-    from: FROM,
+ 
+  const info = await sendEmail({
     to,
     subject: `Booking Confirmed - ${eventTitle} (${bookingRef})`,
     html,
     attachments: [
       {
         filename: 'ticket-qr.png',
-        content: dataUrlToBuffer(qrDataUrl),
-        cid: 'qr-ticket',
+        content: dataUrlToBase64(qrDataUrl),
+        content_id: 'qr-ticket',
       },
     ],
   });
-  console.log(`📧 Booking confirmation email sent to ${to} for ${bookingRef}${info.messageId ? ` (messageId: ${info.messageId})` : ''}`);
+  console.log(`📧 Booking confirmation email sent to ${to} for ${bookingRef}`);
   return info;
 }
-
+ 
 async function sendWaitlistOfferEmail({ to, name, eventTitle, category, claimUrl, expiresAt }) {
   const html = `
     <div style="font-family: Arial, sans-serif; max-width: 480px; margin: auto;">
@@ -86,15 +76,14 @@ async function sendWaitlistOfferEmail({ to, name, eventTitle, category, claimUrl
       <p>Log in to the app and complete your booking before <strong>${new Date(expiresAt).toLocaleString()}</strong>, or it will be offered to the next person in line.</p>
       <p><a href="${claimUrl}" style="background:#4f46e5;color:#fff;padding:10px 18px;border-radius:6px;text-decoration:none;">Go to Booking</a></p>
     </div>`;
-
-  const info = await transporter.sendMail({
-    from: FROM,
+ 
+  const info = await sendEmail({
     to,
     subject: `Your waitlisted ticket is now available - ${eventTitle}`,
     html,
   });
-  console.log(`📧 Waitlist offer email sent to ${to}${info.messageId ? ` (messageId: ${info.messageId})` : ''}`);
+  console.log(`📧 Waitlist offer email sent to ${to}`);
   return info;
 }
-
+ 
 module.exports = { generateQRCodeDataUrl, sendBookingConfirmationEmail, sendWaitlistOfferEmail };
