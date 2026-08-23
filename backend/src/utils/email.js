@@ -8,13 +8,14 @@ function buildTransport() {
     return nodemailer.createTransport({ jsonTransport: true });
   }
   return nodemailer.createTransport({
-    service: 'gmail',
+    host: 'smtp.gmail.com',
+    port: 465,
+    secure: true,
     auth: {
       user: process.env.GMAIL_USER,
       pass: process.env.GMAIL_APP_PASSWORD, // 16-char App Password, NOT your normal Gmail password
     },
   });
-}
 
 const transporter = buildTransport();
 const FROM = process.env.EMAIL_FROM || `Ticket Booking <${process.env.GMAIL_USER || 'no-reply@ticketbooking.dev'}>`;
